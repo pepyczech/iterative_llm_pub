@@ -8,3 +8,5 @@ unstructured
 networkx
 python-pptx
 docx2txt
+reportlab
+python-docx

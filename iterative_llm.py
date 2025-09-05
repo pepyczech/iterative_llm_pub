@@ -1,22 +1,336 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
+#import pandas as pd
+#import numpy as np
 
-import warnings
+#import warnings
 from datetime import datetime
 import json, os, sys, traceback, re, tempfile
-import httpx, base64
+#import httpx
+import base64
 
 import zipfile
+import io
 from io import BytesIO
-from zipfile import ZipFile
+#from zipfile import ZipFile
 
 import openai
 #from openai import OpenAI
 from langchain.document_loaders import PyPDFLoader,Docx2txtLoader, TextLoader, CSVLoader #,PyMuPDFLoader
 from langchain_community.document_loaders import UnstructuredExcelLoader, UnstructuredPowerPointLoader #, CSVLoader
 
+#import pypandoc
+#pypandoc.download_pandoc()
+
+from docx import Document
+from docx.shared import Pt
+#from docx2pdf import convert
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
+
 # pip install "unstructured[all-docs]"
+
+# Helper functions to determine font style
+
+def parse_markdown_runs(text):
+    """
+    Parse Markdown-like symbols (*, **, ***) and <u></u> into styled text chunks.
+    Returns a list of (chunk_text, bold, italic, underline).
+    """
+    chunks = []
+    # Handle underline first (<u>...</u>)
+    underline_pattern = re.compile(r"<u>(.*?)</u>")
+    last_idx = 0
+    for m in underline_pattern.finditer(text):
+        if m.start() > last_idx:
+            chunks.extend(parse_bold_italic(text[last_idx:m.start()]))
+        chunks.append((m.group(1), False, False, True))
+        last_idx = m.end()
+    if last_idx < len(text):
+        chunks.extend(parse_bold_italic(text[last_idx:]))
+
+    return chunks
+
+def parse_bold_italic(text):
+    """
+    Handle bold/italic/combined Markdown markers.
+    """
+    tokens = []
+    pattern = re.compile(r"(\*\*\*.*?\*\*\*|\*\*.*?\*\*|\*.*?\*)")
+    last_idx = 0
+    for m in pattern.finditer(text):
+        if m.start() > last_idx:
+            tokens.append((text[last_idx:m.start()], False, False, False))
+        chunk = m.group(0)
+        if chunk.startswith("***"):
+            tokens.append((chunk.strip("*"), True, True, False))
+        elif chunk.startswith("**"):
+            tokens.append((chunk.strip("*"), True, False, False))
+        elif chunk.startswith("*"):
+            tokens.append((chunk.strip("*"), False, True, False))
+        last_idx = m.end()
+    if last_idx < len(text):
+        tokens.append((text[last_idx:], False, False, False))
+    return tokens
+
+def get_font(run):
+    font = "Helvetica"
+    if run.bold and run.italic:
+        font += "-BoldOblique"
+    elif run.bold:
+        font += "-Bold"
+    elif run.italic:
+        font += "-Oblique"
+    return font
+
+def wrap_text(text, font_name, font_size, max_width,pdf_canvas):
+    """
+    Wrap text to fit within max_width in points.
+    Returns a list of lines.
+    """
+    words = text.split()
+    lines = []
+    current_line = ""
+    for word in words:
+        test_line = f"{current_line} {word}".strip()
+        if pdf_canvas.stringWidth(test_line, font_name, font_size) <= max_width:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    if current_line:
+        lines.append(current_line)
+    return lines
+
+def process_md(final_response,txt_format='doc'):
+
+    if 'doc' in txt_format.lower():
+        docx_buffer = io.BytesIO()
+        doc = Document()
+
+        for line in final_response.splitlines():
+            
+            line = line.strip()
+            if not line:
+                continue  # skip empty lines
+            # Headings
+            if line.startswith("# "):
+                doc.add_heading(line[2:], level=1)
+            elif line.startswith("## "):
+                doc.add_heading(line[3:], level=2)
+            elif line.startswith("### "):
+                doc.add_heading(line[4:], level=3)
+            # Bullet lists
+            elif line.startswith("- "):
+                doc.add_paragraph(line[2:], style="List Bullet")
+            # Paragraphs with basic bold/italic
+            else:
+                p = doc.add_paragraph()
+                remaining = line
+                while remaining:
+                    if "**" in remaining:
+                        before, rest = remaining.split("**", 1)
+                        if before:
+                            p.add_run(before)
+                        if "**" in rest:
+                            bold_text, remaining = rest.split("**", 1)
+                            run = p.add_run(bold_text)
+                            run.bold = True
+                        else:
+                            run = p.add_run(rest)
+                            run.bold = True
+                            remaining = ""
+                    elif "*" in remaining:
+                        before, rest = remaining.split("*", 1)
+                        if before:
+                            p.add_run(before)
+                        if "*" in rest:
+                            italic_text, remaining = rest.split("*", 1)
+                            run = p.add_run(italic_text)
+                            run.italic = True
+                        else:
+                            run = p.add_run(rest)
+                            run.italic = True
+                            remaining = ""
+                    else:
+                        p.add_run(remaining)
+                        remaining = ""
+                        
+        doc.save(docx_buffer)
+        docx_buffer.seek(0)
+        doc=docx_buffer.read()  
+    elif 'pdf' in txt_format.lower():
+        
+        page_width, page_height = LETTER
+        left_margin = right_margin = 50
+        top_margin = 50
+        bottom_margin = 50
+        line_spacing = 1.2  # multiplier for font size
+        max_line_width = page_width - left_margin - right_margin
+        
+        pdf_buffer = io.BytesIO()
+        pdf_canvas = canvas.Canvas(pdf_buffer, pagesize=LETTER)
+        y = page_height - top_margin  # Start near top
+        
+        # Process paragraphs
+        for text in final_response.splitlines():
+
+            txt_list=[]
+            font=[]
+            size=[]
+            new_line=[]
+            
+            text = text.strip()
+
+            if not text:
+                y -= 12  # empty line spacing
+                continue
+            
+            # Add extra spacing before headers
+            if text.startswith("#"):
+                y -= 12
+
+            pref = ""
+            underline = False
+            
+            # Determine font and size
+            if text.startswith("# "):
+                font_name = "Helvetica-Bold"
+                base_font_size = 18
+                spacing_after = 12
+                text=text.replace('# ','')
+
+                txt_list.append(text)
+                font.append(font_name)
+                size.append(base_font_size)
+                new_line.append(True)
+                
+            elif text.startswith("## "):
+                font_name = "Helvetica-Bold"
+                font_size = 16
+                spacing_after = 10
+                text=text.replace('## ','')
+
+                txt_list.append(text)
+                font.append(font_name)
+                size.append(base_font_size)
+                new_line.append(True)
+                
+            elif text.startswith("### "):
+                font_name = "Helvetica-Bold"
+                base_font_size = 14
+                spacing_after = 8
+                text=text.replace('### ','')
+
+                txt_list.append(text)
+                font.append(font_name)
+                size.append(base_font_size)
+                new_line.append(True)
+                
+            else:
+                
+                if text.startswith("- "):         
+                    text=text[2:]
+                    text = "• "+text
+                    
+                base_font_size = 12
+                spacing_after = 6
+
+                # Parse text into styled chunks
+                chunks = parse_markdown_runs(text)
+
+                count=1
+                test_line=''
+                
+                for chunk_text, bold, italic, underline in chunks:
+
+                    chunk_text_w = chunk_text.split()
+                    
+                    if bold and italic:
+                        font_name = "Helvetica-BoldOblique"
+                    elif bold:
+                        font_name = "Helvetica-Bold"
+                    elif italic:
+                        font_name = "Helvetica-Oblique"
+                    else:
+                        font_name = "Helvetica"
+
+                    
+                    sub_chunk=''
+                    for word in chunk_text_w:
+                        test_line=test_line+' '+word
+                        sub_chunk=sub_chunk+' '+word
+                        cond_length = pdf_canvas.stringWidth(test_line, "Helvetica-Bold", 12) > max_line_width
+
+                        if cond_length:
+                            txt_list.append(sub_chunk)
+                            font.append(font_name)
+                            size.append(base_font_size)
+                            sub_chunk=''
+                            new_line.append(True)
+                            test_line=''
+                            
+                    cond_count = count>=len(chunks)
+                    if len(sub_chunk)>0:
+                        txt_list.append(sub_chunk)
+                        font.append(font_name)
+                        size.append(base_font_size)
+                        if cond_count:
+                            new_line.append(True)
+                            test_line=''
+                        else:
+                            new_line.append(False)
+                    
+                    #print(f'Chunk OTHER: "{chunk_text}" Bold: {bold} Italic: {italic} Underline: {underline}')
+                    #print(f'Font OTHER: {font_name}, Size: {base_font_size}')
+
+                    count+=1
+                    
+            # Parse text into styled chunks
+            #chunks = parse_markdown_runs(text)
+
+            # Render each chunk
+            x = left_margin
+            for ch in range(len(txt_list)):
+
+                #print(f'Chunk: "{chunk_text}" Bold: {bold} Italic: {italic} Underline: {underline}')
+                #print(f'Font: {font_name}, Size: {base_font_size}')
+
+                wrapped_lines = wrap_text(txt_list[ch], font[ch], size[ch], max_line_width, pdf_canvas)
+                
+                for line in wrapped_lines:
+                    if y < bottom_margin:
+                        pdf_canvas.showPage()
+                        y = page_height - top_margin
+                        x = left_margin
+                        
+                    pdf_canvas.setFont(font[ch], size[ch])
+                    pdf_canvas.drawString(x, y, line)
+                    
+                    if underline:
+                        underline_width = pdf_canvas.stringWidth(line, font[ch], size[ch])
+                        pdf_canvas.line(x, y - 2, left_margin + underline_width, y - 2)
+
+                    # Advance x for continuation
+                    line_width = pdf_canvas.stringWidth(line, font[ch], size[ch])
+                    x += line_width + pdf_canvas.stringWidth(" ", font[ch], size[ch])  # add a space
+                    
+                    if new_line[ch]:
+                        y -= size[ch] * line_spacing
+                        x = left_margin
+
+            # Add extra spacing after paragraph
+            y -= spacing_after
+
+        pdf_canvas.save()
+        pdf_buffer.seek(0)
+        doc=pdf_buffer.read()                
+    else:
+        doc=None
+        raise Exception(f'{txt_format} is invalid target format...')
+
+    return(doc)
 
 def check_openai_models(OPENAI_API_KEY,pattern=None):
 
@@ -60,13 +374,13 @@ def check_openai_models(OPENAI_API_KEY,pattern=None):
 
     return(model_overview)
 
-def save_to_cwd_tempfile(uploaded_file):
+def save_to_cwd_tempfile(uploaded_file,suffix=None):
     """
     Saves the uploaded file to a NamedTemporaryFile in the current working directory.
     Returns the temporary file's path.
     """
     # Preserve the original file extension
-    suffix = os.path.splitext(uploaded_file.name)[1]
+    if suffix is None: suffix = os.path.splitext(uploaded_file.name)[1]
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=os.getcwd())
     temp.write(uploaded_file.getbuffer())  # write bytes to file
     temp.flush()
@@ -154,16 +468,23 @@ with st.expander("Click to expand / collapse...", expanded=False):
     st.subheader("Credentials")
 
     login = st.sidebar.toggle("Credentials in a JSON file", value=True, key="login_toggle")
-
+    creds_file = None
     if login:
         #st.write("API Credentials stored in a file")
         #st.write("API Credentials stored in a file")
-        creds_path = st.file_uploader("Select JSON file with credentials", type=["json"], key="creds_path")
-        st.write('Required credentials format: {"base": "<URL>", "key": "<API Key>"}')
 
-        # Read the file and parse JSON
-        if creds_path is not None:
-            with open(creds_path.name, 'r') as f:
+        creds_file = st.file_uploader("Select JSON file with credentials", type=["json"], key="creds_path")
+
+        if test: 
+            st.write(creds_file)
+
+        if creds_file is not None:
+            creds_temp = save_to_cwd_tempfile(creds_file)
+            st.write('Required credentials format: {"base": "<URL>", "key": "<API Key>"}')
+
+            # Read the file and parse JSON
+            
+            with open(creds_temp, 'r') as f:
                 creds = json.load(f)
             st.session_state.base = creds['base']
             st.session_state.key = creds['key']
@@ -232,7 +553,15 @@ with st.expander("Click to expand / collapse...", expanded=False):
 
             st.error(f"An error occurred: {str(e)}")
 
-    if st.sidebar.button("Re-check model availability"):
+    models_file=None
+    models_file = st.file_uploader("Select JSON file with models list", type=["json"], key="models_path")
+    
+    if models_file:
+        models_temp = save_to_cwd_tempfile(models_file)
+        if models_temp is not None:
+            with open(models_temp, 'r') as f:
+                models = json.load(f)
+    elif st.sidebar.button("Re-check model availability"):
 
         models=check_openai_models(st.session_state.key,pattern=None)  
 
@@ -258,6 +587,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
                 st.json(models)
         else:
             st.warning("No models file found. Please re-check model availability.")
+
     models_bytes = json.dumps(models).encode("utf-8")
     st.sidebar.download_button(
         label="Download model list",
@@ -284,13 +614,18 @@ with st.expander("Click to expand / collapse...", expanded=False):
 
     choice = st.toggle("Upload user prompt from a file", value=False, key="prompt_toggle")
 
+    user_prompt=None
+    sys_prompt=None
+
     if choice:
         
         user_prompt_path = st.file_uploader("Select a file with the user prompt")
         st.write('Compatible file types: txt, pdf, docx')
 
         # Read the file
-        user_prompt = None
+        if user_prompt_path is not None:
+            user_prompt_temp = save_to_cwd_tempfile(user_prompt_path)
+            _,user_prompt=load_document(user_prompt_temp)
 
     else:
         
@@ -304,6 +639,9 @@ with st.expander("Click to expand / collapse...", expanded=False):
         st.write('Compatible file types: txt, pdf, docx')
 
         # Read the file
+        if sys_prompt_path is not None:
+            sys_prompt_temp = save_to_cwd_tempfile(sys_prompt_path)
+            _,sys_prompt=load_document(sys_prompt_temp)
 
     else:
         
@@ -411,6 +749,8 @@ with st.expander("Click to expand / collapse...", expanded=True):
                         )
 
                         final_response = response.choices[0].message.content
+                        final_response = final_response.encode("ascii", "ignore").decode()
+                        #final_response = final_response.replace(r'* ', '* \n')
                     
                 if test: 
                     print(response)
@@ -422,7 +762,7 @@ with st.expander("Click to expand / collapse...", expanded=True):
                 # Save response to a text file
                 response_file = f'{fn_out}.txt'
 
-                with open(response_file, 'w') as f:
+                with open(response_file, 'w', encoding='utf-8') as f:
                     f.write(final_response)
 
                 response_file_md = f'{fn_out}.md'
@@ -433,8 +773,23 @@ with st.expander("Click to expand / collapse...", expanded=True):
                 # Add the response file to the zip archive
                 #with ZipFile('response.zip', mode='a') as zf:
                 with zipfile.ZipFile(zip_buffer, mode='a', compression=zipfile.ZIP_DEFLATED) as zip_archive:
+                    #0. Save .MD file
                     #zip_archive.write(response_file_md)
                     zip_archive.writestr(response_file_md, final_response)
+
+                    # Create an in-memory ZIP archive
+
+                    # --------------------------
+                    # Step 1: Convert Markdown-like text → DOCX (in memory)
+                    # --------------------------
+                    docx_buffer = process_md(final_response,txt_format='doc')
+                    zip_archive.writestr(f"{fn_out}.docx", docx_buffer.read())
+
+                    # --------------------------
+                    # Step 2: Convert DOCX → PDF (in memory) using reportlab
+                    # --------------------------
+                    pdf_buffer = process_md(final_response,txt_format='pdf')
+                    zip_archive.writestr(f"{fn_out}.pdf", pdf_buffer.read())
 
             except Exception as e:
 
