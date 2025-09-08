@@ -787,13 +787,13 @@ with st.expander("Click to expand / collapse...", expanded=True):
                     # Step 1: Convert Markdown-like text → DOCX (in memory)
                     # --------------------------
                     docx_buffer = process_md(final_response,txt_format='doc')
-                    zip_archive.writestr(f"{fn_out}.docx", docx_buffer.read())
+                    zip_archive.writestr(f"{fn_out}.docx", docx_buffer)
 
                     # --------------------------
                     # Step 2: Convert DOCX → PDF (in memory) using reportlab
                     # --------------------------
                     pdf_buffer = process_md(final_response,txt_format='pdf')
-                    zip_archive.writestr(f"{fn_out}.pdf", pdf_buffer.read())
+                    zip_archive.writestr(f"{fn_out}.pdf", pdf_buffer)
 
             except Exception as e:
 
