@@ -11,3 +11,4 @@ docx2txt
 reportlab
 python-docx
 msoffcrypto-tool
+openpyxl
