@@ -457,6 +457,8 @@ tday = datetime.today().strftime('%Y%m%d')
 
 if 'base' not in st.session_state: st.session_state.base = None
 if 'key' not in st.session_state: st.session_state.key = None
+if 'creds' not in st.session_state: st.session_state.creds = None
+if 'models' not in st.session_state: st.session_state.models = None
     
 st.header("Settings")
 
@@ -489,6 +491,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
                 creds = json.load(f)
             st.session_state.base = creds['base']
             st.session_state.key = creds['key']
+            st.session_state.creds = creds
 
     else:
         st.write("Enter your API credentials")
@@ -511,9 +514,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
             st.write(f"Credentials saved to {creds_path}")
             st.session_state.base = creds['base']
             st.session_state.key = creds['key']
-
-    models=None
-    creds_pass=False
+            st.session_state.creds = creds
     
     if st.sidebar.button("Test credentials"):
 
@@ -546,7 +547,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
 
             st.error(f"An error occurred: {str(e)}")
 
-    if creds:
+    if st.session_state.creds:
         creds_bytes = json.dumps(creds).encode("utf-8")
         st.sidebar.download_button(
             label="Download credentials",
@@ -557,7 +558,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
             key='download-creds-button'
         )
 
-        models_file=None
+    models_file=None
     models_file = st.file_uploader("Select JSON file with models list", type=["json"], key="models_path")
     
     if models_file:
@@ -565,11 +566,11 @@ with st.expander("Click to expand / collapse...", expanded=False):
         if models_temp is not None:
             with open(models_temp, 'r') as f:
                 models = json.load(f)
-
+            st.session_state.models = models
     elif st.sidebar.button("Re-check model availability"):
 
         models=check_openai_models(st.session_state.key,pattern=None)  
-
+        st.session_state.models = models
         # Save models to JSON file
         with open(f'models_latest.json', 'w') as f:
             json.dump(models, f, indent=4)
@@ -582,16 +583,16 @@ with st.expander("Click to expand / collapse...", expanded=False):
         if os.path.exists('models_latest.json'):
             with open('models_latest.json', 'r') as f:
                 models = json.load(f)
-
+            st.session_state.models = models
         else:
             st.warning("No models file found. Please re-check model availability.")
 
-    if models:
+    if st.session_state.models:
         if test | show_model_info: 
             st.write("Available models:")
-            st.json(models)
+            st.json(st.session_state.models)
 
-        models_bytes = json.dumps(models).encode("utf-8")
+        models_bytes = json.dumps(st.session_state.models).encode("utf-8")
         st.sidebar.download_button(
             label="Download model list",
             data=models_bytes,
@@ -604,7 +605,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
     #st.subheader("Select LLM Model")
 
     if models is not None:
-        available_models = [model for model, available in models.items() if available == 'Y']
+        available_models = [model for model, available in st.session_state.models.items() if available == 'Y']
         if available_models:
             model = st.sidebar.selectbox("Select a model", available_models, index=0)
         else:
