@@ -513,7 +513,8 @@ with st.expander("Click to expand / collapse...", expanded=False):
             st.session_state.key = creds['key']
 
     models=None
-
+    creds_pass=False
+    
     if st.sidebar.button("Test credentials"):
 
         if (st.session_state.base is not None) & (st.session_state.key is not None):
@@ -537,15 +538,6 @@ with st.expander("Click to expand / collapse...", expanded=False):
             if test: st.write(f'Test API response: {answer}')
             if 'paris' in answer.lower():
                 st.success("API call successful. Credentials are valid.")
-                creds_bytes = json.dumps(creds).encode("utf-8")
-                st.sidebar.download_button(
-                    label="Download credentials",
-                    data=creds_bytes,
-                    file_name=f"api_creds_{tday}.json",
-                    mime="application/json",
-                    icon=":material/download:",
-                    key='download-creds-button'
-                )
 
             else:
                 st.error("API call did not return the expected result. Please check your credentials.")
@@ -554,7 +546,18 @@ with st.expander("Click to expand / collapse...", expanded=False):
 
             st.error(f"An error occurred: {str(e)}")
 
-    models_file=None
+    if creds:
+        creds_bytes = json.dumps(creds).encode("utf-8")
+        st.sidebar.download_button(
+            label="Download credentials",
+            data=creds_bytes,
+            file_name=f"api_creds_{tday}.json",
+            mime="application/json",
+            icon=":material/download:",
+            key='download-creds-button'
+        )
+
+        models_file=None
     models_file = st.file_uploader("Select JSON file with models list", type=["json"], key="models_path")
     
     if models_file:
