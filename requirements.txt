@@ -2,7 +2,7 @@ streamlit
 pandas
 numpy
 openai
-langchain
+langchain==0.3.27
 langchain-community
 unstructured
 networkx
