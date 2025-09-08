@@ -604,7 +604,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
 
     #st.subheader("Select LLM Model")
 
-    if models is not None:
+    if st.session_state.models is not None:
         available_models = [model for model, available in st.session_state.models.items() if available == 'Y']
         if available_models:
             model = st.sidebar.selectbox("Select a model", available_models, index=0)
