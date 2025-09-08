@@ -459,7 +459,9 @@ if 'base' not in st.session_state: st.session_state.base = None
 if 'key' not in st.session_state: st.session_state.key = None
 if 'creds' not in st.session_state: st.session_state.creds = None
 if 'models' not in st.session_state: st.session_state.models = None
-    
+if 'model' not in st.session_state: st.session_state.model = None
+if 'creds_pass' not in st.session_state: st.session_state.creds_pass = False
+
 st.header("Settings")
 
 with st.expander("Click to expand / collapse...", expanded=False):
@@ -539,6 +541,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
             if test: st.write(f'Test API response: {answer}')
             if 'paris' in answer.lower():
                 st.success("API call successful. Credentials are valid.")
+                st.session_state.creds_pass=True
 
             else:
                 st.error("API call did not return the expected result. Please check your credentials.")
@@ -607,10 +610,9 @@ with st.expander("Click to expand / collapse...", expanded=False):
     if st.session_state.models is not None:
         available_models = [model for model, available in st.session_state.models.items() if available == 'Y']
         if available_models:
-            model = st.sidebar.selectbox("Select a model", available_models, index=0)
+            st.session_state.model = st.sidebar.selectbox("Select a model", available_models, index=0)
         else:
             st.error("No available models found.")
-            model = None
 
     #st.header("Main page")
 
@@ -670,6 +672,14 @@ with st.expander("Click to expand / collapse...", expanded=True):
 
     if (st.session_state.key is None): 
         st.error("API calls are allowed but API key is missing - disabling API calls.")
+        allow_api=False
+
+    if (st.session_state.creds_pass == False): 
+        st.error("API calls are allowed but credentials are not valid - disabling API calls.")
+        allow_api=False
+
+    if (st.session_state.model is None): 
+        st.error("API calls are allowed but LLM type is not defined - disabling API calls.")
         allow_api=False
 
     temp=st.sidebar.slider('Temperature', 0.0, 1.0, 0.1)
@@ -737,24 +747,30 @@ with st.expander("Click to expand / collapse...", expanded=True):
                 final_response = "No response"
 
                 if allow_api:
-                    if web_search:
-                        response = client.responses.create(
-                            model=model,
-                            tools=[{"type": "web_search_preview"}],
-                            input=prompts,
-                            temperature=temp
-                        )
-                        final_response = response.output_text
-                    else:
-                        response = client.chat.completions.create(
-                            model=model,
-                            messages=prompts,
-                            temperature=temp
-                        )
+                    try:
+                        if web_search:
+                            response = client.responses.create(
+                                model=st.session_state.model,
+                                tools=[{"type": "web_search_preview"}],
+                                input=prompts,
+                                temperature=temp
+                            )
+                            final_response = response.output_text
+                            final_response = final_response.encode("ascii", "ignore").decode()
+                        else:
+                            response = client.chat.completions.create(
+                                model=st.session_state.model,
+                                messages=prompts,
+                                temperature=temp
+                            )
 
-                        final_response = response.choices[0].message.content
-                        final_response = final_response.encode("ascii", "ignore").decode()
-                        #final_response = final_response.replace(r'* ', '* \n')
+                            final_response = response.choices[0].message.content
+                            final_response = final_response.encode("ascii", "ignore").decode()
+                            #final_response = final_response.replace(r'* ', '* \n')
+                    except Exception as e:
+                        final_response = f"**Error generating response:** {str(e)}"
+                else:
+                    final_response = "**API calls are disabled** - no response generated."
                     
                 if test: 
                     print(response)
