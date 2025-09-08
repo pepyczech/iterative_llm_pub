@@ -469,6 +469,7 @@ with st.expander("Click to expand / collapse...", expanded=False):
 
     login = st.sidebar.toggle("Credentials in a JSON file", value=True, key="login_toggle")
     creds_file = None
+
     if login:
         #st.write("API Credentials stored in a file")
         #st.write("API Credentials stored in a file")
@@ -561,13 +562,10 @@ with st.expander("Click to expand / collapse...", expanded=False):
         if models_temp is not None:
             with open(models_temp, 'r') as f:
                 models = json.load(f)
+
     elif st.sidebar.button("Re-check model availability"):
 
         models=check_openai_models(st.session_state.key,pattern=None)  
-
-        if test | show_model_info: 
-            st.write("Available models:")
-            st.json(models)
 
         # Save models to JSON file
         with open(f'models_latest.json', 'w') as f:
@@ -582,21 +580,23 @@ with st.expander("Click to expand / collapse...", expanded=False):
             with open('models_latest.json', 'r') as f:
                 models = json.load(f)
 
-            if test | show_model_info: 
-                st.write("Available models:")
-                st.json(models)
         else:
             st.warning("No models file found. Please re-check model availability.")
 
-    models_bytes = json.dumps(models).encode("utf-8")
-    st.sidebar.download_button(
-        label="Download model list",
-        data=models_bytes,
-        file_name=f"models_list_{tday}.json",
-        mime="application/json",
-        icon=":material/download:",
-        key='download-models-button'
-    )
+    if models:
+        if test | show_model_info: 
+            st.write("Available models:")
+            st.json(models)
+
+        models_bytes = json.dumps(models).encode("utf-8")
+        st.sidebar.download_button(
+            label="Download model list",
+            data=models_bytes,
+            file_name=f"models_list_{tday}.json",
+            mime="application/json",
+            icon=":material/download:",
+            key='download-models-button'
+        )
 
     #st.subheader("Select LLM Model")
 
