@@ -110,8 +110,14 @@ def process_md(final_response,txt_format='doc'):
         doc = Document()
 
         for line in final_response.splitlines():
-            
+
+            lead_count = 2*(len(line) - len(line.lstrip()))
+            if lead_count>0:
+                lead = ' '*lead_count
+            else:
+                lead=''
             line = line.strip()
+            
             if not line:
                 continue  # skip empty lines
             # Headings
@@ -122,11 +128,15 @@ def process_md(final_response,txt_format='doc'):
             elif line.startswith("### "):
                 doc.add_heading(line[4:], level=3)
             # Bullet lists
-            elif line.startswith("- "):
-                doc.add_paragraph(line[2:], style="List Bullet")
+            #elif line.startswith("- "):
+                #doc.add_paragraph(line[2:], style="List Bullet")
             # Paragraphs with basic bold/italic
             else:
-                p = doc.add_paragraph()
+                if line.startswith("- "):
+                    line = lead+re.sub("^-", "", line)
+                    p = doc.add_paragraph(line[0+lead_count], style="List Bullet")
+                else:
+                    p = doc.add_paragraph()
                 remaining = line
                 while remaining:
                     if "**" in remaining:
@@ -160,6 +170,7 @@ def process_md(final_response,txt_format='doc'):
         doc.save(docx_buffer)
         docx_buffer.seek(0)
         doc=docx_buffer.read()  
+        
     elif 'pdf' in txt_format.lower():
         
         page_width, page_height = LETTER
@@ -180,7 +191,13 @@ def process_md(final_response,txt_format='doc'):
             font=[]
             size=[]
             new_line=[]
-            
+
+            lead_count = 2*(len(text) - len(text.lstrip()))
+            if lead_count>0:
+                lead = ' '*lead_count
+            else:
+                lead=''
+
             text = text.strip()
 
             if not text:
@@ -232,7 +249,7 @@ def process_md(final_response,txt_format='doc'):
                 
                 if text.startswith("- "):         
                     text=text[2:]
-                    text = "• "+text
+                    text = lead+"• "+text
                     
                 base_font_size = 12
                 spacing_after = 6
@@ -292,6 +309,8 @@ def process_md(final_response,txt_format='doc'):
 
             # Render each chunk
             x = left_margin
+            lead2=lead
+            
             for ch in range(len(txt_list)):
 
                 #print(f'Chunk: "{chunk_text}" Bold: {bold} Italic: {italic} Underline: {underline}')
@@ -306,19 +325,21 @@ def process_md(final_response,txt_format='doc'):
                         x = left_margin
                         
                     pdf_canvas.setFont(font[ch], size[ch])
-                    pdf_canvas.drawString(x, y, line)
+                    pdf_canvas.drawString(x, y, lead2+line)
                     
                     if underline:
-                        underline_width = pdf_canvas.stringWidth(line, font[ch], size[ch])
+                        underline_width = pdf_canvas.stringWidth(lead2+line, font[ch], size[ch])
                         pdf_canvas.line(x, y - 2, left_margin + underline_width, y - 2)
 
                     # Advance x for continuation
-                    line_width = pdf_canvas.stringWidth(line, font[ch], size[ch])
+                    line_width = pdf_canvas.stringWidth(lead2+line, font[ch], size[ch])
                     x += line_width + pdf_canvas.stringWidth(" ", font[ch], size[ch])  # add a space
-                    
+
+                    lead2=''
                     if new_line[ch]:
                         y -= size[ch] * line_spacing
                         x = left_margin
+                        lead2=lead
 
             # Add extra spacing after paragraph
             y -= spacing_after
@@ -655,12 +676,12 @@ with st.expander("Click to expand / collapse...", expanded=False):
 
 st.header("Process Documents")
 
+web_search = st.sidebar.checkbox("Use tool-based websearch", value=False, key="web_search_checkbox")
+allow_api = st.sidebar.checkbox("Allow API calls", value=True, key="api_checkbox")
+
 with st.expander("Click to expand / collapse...", expanded=True):
 
     st.subheader("Upload one or more documents")
-
-    web_search = st.sidebar.checkbox("Enable web search", value=False, key="web_search_checkbox")
-    allow_api = st.sidebar.checkbox("Allow API calls", value=True, key="api_checkbox")
 
     if (user_prompt is None): 
         st.error("API calls are allowed but user_prompt is empty - disabling API calls.")
